@@ -19,3 +19,9 @@ chmod +x install_keepalived.sh
 vi install_keepalived.sh
 bash install_keepalived.sh
 ```
+
+Install Hashicorp Vault
+```text
+curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_hashicorp_vault.sh | sudo bash
+```
+
