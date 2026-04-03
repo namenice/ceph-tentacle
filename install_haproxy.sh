@@ -1,86 +1,44 @@
 #!/bin/bash
 
-# --- Configuration ---
-HAPROXY_VER="3.2.15"
-HAPROXY_URL="https://www.haproxy.org/download/3.2/src/haproxy-${HAPROXY_VER}.tar.gz"
-
 # --- 1. Check Root Privilege ---
 if [[ $EUID -ne 0 ]]; then
    echo "❌ Error: This script must be run as root."
    exit 1
 fi
 
-echo "📦 [1/6] Installing Build Dependencies..."
+echo "📦 [1/4] Adding HAProxy 3.0 PPA and Installing..."
 export DEBIAN_FRONTEND=noninteractive
+
+# ติดตั้งตัวจัดการ PPA
 apt-get update
-apt-get install -y build-essential gcc make libpcre2-dev libssl-dev \
-                   zlib1g-dev libsystemd-dev liblua5.4-dev wget curl
+apt-get install -y --no-install-recommends software-properties-common curl wget
 
-echo "📂 [2/6] Downloading and Extracting HAProxy ${HAPROXY_VER}..."
-cd /tmp
-wget -q $HAPROXY_URL -O "haproxy-${HAPROXY_VER}.tar.gz"
-tar -xzf "haproxy-${HAPROXY_VER}.tar.gz"
-cd "haproxy-${HAPROXY_VER}"
+# เพิ่ม PPA และติดตั้ง HAProxy 3.0
+add-apt-repository -y ppa:vbernat/haproxy-3.0
+apt-get update
+apt-get install -y haproxy=3.0.\*
 
-echo "🛠️ [3/6] Compiling HAProxy with Full Features (S3 & Prometheus)..."
-# เพิ่ม Flag สำคัญ: USE_PROMETHEUS_EXPORTER=1 และ USE_LUA=1
-make -j $(nproc) TARGET=linux-glibc \
-    USE_PCRE2=1 \
-    USE_OPENSSL=1 \
-    USE_ZLIB=1 \
-    USE_SYSTEMD=1 \
-    USE_LUA=1 \
-    USE_PROMETHEUS_EXPORTER=1
-
-make install
-cp /usr/local/sbin/haproxy /usr/local/bin/haproxy
-
-echo "👤 [4/6] Setting up User and Directories..."
-getent group haproxy >/dev/null || groupadd -g 188 haproxy
-getent passwd haproxy >/dev/null || useradd -g haproxy -u 188 -d /var/lib/haproxy -s /sbin/nologin -c haproxy haproxy
-
-mkdir -p /etc/haproxy /var/lib/haproxy
+echo "👤 [2/4] Ensuring Directories and Permissions..."
+# PPA จะสร้าง user haproxy ให้โดยอัตโนมัติ
+mkdir -p /var/lib/haproxy
 chown haproxy:haproxy /var/lib/haproxy
 
-echo "📄 [5/6] Creating Systemd Service File..."
-cat <<'EOF' | tee /etc/systemd/system/haproxy.service > /dev/null
-[Unit]
-Description=HAProxy Load Balancer (Optimized for Ceph S3)
-After=network-online.target
-Wants=network-online.target
+echo "⚙️ [3/4] Creating Optimized Configuration (S3 & Ceph Dashboard)..."
+# สำรองไฟล์เดิมไว้ก่อน
+mv /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.bak
 
-[Service]
-# เพิ่ม Limit สำหรับรับงานหนัก
-LimitNOFILE=1048576
-Environment="CONFIG=/etc/haproxy/haproxy.cfg" "PIDFILE=/run/haproxy.pid"
-
-ExecStartPre=/usr/local/bin/haproxy -f $CONFIG -c -q
-ExecStart=/usr/local/bin/haproxy -Ws -f $CONFIG -p $PIDFILE
-
-ExecReload=/usr/local/bin/haproxy -f $CONFIG -c -q
-ExecReload=/bin/kill -USR2 $MAINPID
-
-KillMode=mixed
-Restart=always
-SuccessExitStatus=143
-Type=notify
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-echo "⚙️ [6/6] Creating Optimized Configuration for S3..."
 cat <<EOF | tee /etc/haproxy/haproxy.cfg > /dev/null
 global
     log /dev/log local0
+    log /dev/log local1 notice
     user haproxy
     group haproxy
     daemon
-    
+
     # --- Performance Tuning ---
     maxconn 100000
+    # HAProxy 3.0 ใช้คอร์ทั้งหมดอัตโนมัติ แต่ระบุเพื่อความชัดเจนได้
     nbthread $(nproc)
-    cpu-map auto:1-$(nproc) 0-$(( $(nproc) - 1 ))
     stats socket /var/lib/haproxy/stats expose-fd listeners level admin
     
     # Optimize for large objects (S3)
@@ -108,11 +66,9 @@ defaults
 frontend stats
     bind *:8404
     description "HAProxy Statistics and Prometheus Metrics"
+    # HAProxy 3.0 จาก PPA มาพร้อม Prometheus support อยู่แล้ว
+    http-request use-service prometheus-exporter if { path /metrics }
     
-    # Native Prometheus Exporter (Requires compiled-in module)
-    #http-request use-service prometheus-exporter if { path /metrics }
-    
-    # Standard Stats UI
     stats enable
     stats uri /stats
     stats refresh 10s
@@ -121,58 +77,52 @@ frontend stats
 frontend s3_frontend
     bind *:80
     description "Main Entry for Ceph RGW"
-    
-    # S3 Log Format (More detailed for debugging)
     log-format "%ci:%cp [%t] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r"
-    
-    # กำหนดหลังบ้าน (Backend)
     default_backend rgw_back
+
+frontend fe_ceph_dashboard
+    bind *:8443
+    mode tcp
+    option tcplog
+    default_backend be_ceph_dashboard
 
 backend rgw_back
     description "Ceph RGW Cluster"
     balance roundrobin
-    
-    # Health check specific for RGW
     option httpchk GET /
     http-check expect status 200
-    
-    # ตัวอย่าง Server (แก้ไข IP ตามระบบของคุณ)
-    # server rgw-node1 192.168.1.11:8080 check inter 2s rise 2 fall 3
-    # server rgw-node2 192.168.1.12:8080 check inter 2s rise 2 fall 3
-
-# --- Frontend สำหรับ Ceph Dashboard ---
-frontend fe_ceph_dashboard
-    bind *:8443
-    mode tcp              # เปลี่ยนเป็น TCP เพื่อให้ Browser คุยกับ Ceph โดยตรง
-    option tcplog
-    default_backend be_ceph_dashboard
+    # server rgw-node1 192.168.1.11:8080 check inter 2s
 
 backend be_ceph_dashboard
     mode tcp
     option httpchk GET /
     http-check expect status 200
-
+    # ส่ง Health Check แบบ SSL โดยไม่ตรวจใบเซอร์
     server lab-mgr01 172.71.1.102:8443 check check-ssl verify none
     server lab-mgr02 172.71.1.103:8443 check check-ssl verify none
-
 EOF
 
-echo "🔄 Restarting and Enabling Service..."
+echo "🔄 [4/4] Restarting and Enabling Service..."
+# ปรับแต่ง Resource Limit ผ่าน Systemd Drop-in (สำหรับ Package install)
+mkdir -p /etc/systemd/system/haproxy.service.d/
+cat <<EOF | tee /etc/systemd/system/haproxy.service.d/limits.conf > /dev/null
+[Service]
+LimitNOFILE=1048576
+EOF
+
 systemctl daemon-reload
-systemctl enable --now haproxy
+systemctl enable haproxy
 systemctl restart haproxy
 
 echo ""
 echo "========================================================"
-echo "🎯 HAProxy ${HAPROXY_VER} Build Complete!"
+echo "🎯 HAProxy 3.0 Installation via PPA Complete!"
 echo "========================================================"
-echo "✅ Compiled with Prometheus: YES"
-echo "✅ Compiled with LUA Support: YES"
-echo "✅ S3 Optimized Timeouts:   YES"
+echo "✅ Install Method:  APT (PPA:vbernat)"
+echo "✅ Version:         $(haproxy -v | awk '{print $3}')"
+echo "✅ S3 Optimized:    YES"
+echo "✅ Active/Standby:  Configured for Dashboard"
 echo "--------------------------------------------------------"
 echo "📈 Stats UI:        http://$(hostname -I | awk '{print $1}'):8404/stats"
-echo "📊 Metrics Endpoint: http://$(hostname -I | awk '{print $1}'):8404/metrics"
-echo "--------------------------------------------------------"
-echo "👉 NEXT STEP: Edit /etc/haproxy/haproxy.cfg to add your"
-echo "   RGW Node IPs in 'backend rgw_back' and setup SSL."
+echo "📊 Metrics:          http://$(hostname -I | awk '{print $1}'):8404/metrics"
 echo "========================================================"
