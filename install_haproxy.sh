@@ -20,7 +20,7 @@ tar -xzf "haproxy-${HAPROXY_VER}.tar.gz"
 cd "haproxy-${HAPROXY_VER}"
 
 echo "🛠️ [3/6] Compiling HAProxy (this may take a minute)..."
-make -j $(nproc) TARGET=linux-glibc USE_PCRE2=1 USE_OPENSSL=1 USE_ZLIB=1 USE_SYSTEMD=1
+make -j $(nproc) TARGET=linux-glibc USE_PCRE2=1 USE_OPENSSL=1 USE_ZLIB=1 USE_SYSTEMD=1 USE_PROMETHEUS_EXPORTER=1
 make install
 
 # มั่นใจว่าไฟล์อยู่ที่ /usr/local/bin ตามที่คุณต้องการ
