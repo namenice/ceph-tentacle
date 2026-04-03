@@ -92,6 +92,7 @@ frontend stats
     stats uri /stats
     stats refresh 10s
     stats admin if LOCALHOST
+    http-request use-service prometheus-exporter if { path /metrics }
 EOF
 
 echo "🔄 Restarting and Enabling Service..."
