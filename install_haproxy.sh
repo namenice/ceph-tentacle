@@ -110,7 +110,7 @@ frontend stats
     description "HAProxy Statistics and Prometheus Metrics"
     
     # Native Prometheus Exporter (Requires compiled-in module)
-    http-request use-service prometheus-exporter if { path /metrics }
+    #http-request use-service prometheus-exporter if { path /metrics }
     
     # Standard Stats UI
     stats enable
