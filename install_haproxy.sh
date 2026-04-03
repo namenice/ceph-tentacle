@@ -142,7 +142,7 @@ backend rgw_back
 
 # --- Frontend สำหรับ Ceph Dashboard ---
 frontend fe_ceph_dashboard
-    bind *:844-
+    bind *:8443
     mode tcp              # เปลี่ยนเป็น TCP เพื่อให้ Browser คุยกับ Ceph โดยตรง
     option tcplog
     default_backend be_ceph_dashboard
