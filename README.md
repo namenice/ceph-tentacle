@@ -11,6 +11,11 @@ Install Haproxy
 ```text
 curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_haproxy.sh | sudo bash
 ```
+Destroy Haproxy
+```text
+curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/destroy_haproxy.sh | sudo bash
+```
+
 
 Install Keepalived
 ```text
