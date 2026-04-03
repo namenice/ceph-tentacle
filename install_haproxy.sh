@@ -6,42 +6,37 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-echo "📦 [1/4] Adding HAProxy 3.0 PPA and Installing..."
+echo "📦 [1/5] Installing HAProxy 3.0 via PPA..."
 export DEBIAN_FRONTEND=noninteractive
-
-# ติดตั้งตัวจัดการ PPA
 apt-get update
 apt-get install -y --no-install-recommends software-properties-common curl wget
-
-# เพิ่ม PPA และติดตั้ง HAProxy 3.0
 add-apt-repository -y ppa:vbernat/haproxy-3.0
 apt-get update
 apt-get install -y haproxy=3.0.\*
 
-echo "👤 [2/4] Ensuring Directories and Permissions..."
-# PPA จะสร้าง user haproxy ให้โดยอัตโนมัติ
+echo "📂 [2/5] Setting up Modular Directory (conf.d)..."
+mkdir -p /etc/haproxy/conf.d
 mkdir -p /var/lib/haproxy
 chown haproxy:haproxy /var/lib/haproxy
 
-echo "⚙️ [3/4] Creating Optimized Configuration (S3 & Ceph Dashboard)..."
-# สำรองไฟล์เดิมไว้ก่อน
-mv /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.bak
+# เก็บไฟล์ Default เดิมของระบบไว้เป็นไฟล์หลัก (Reference)
+if [ ! -f /etc/haproxy/haproxy.cfg.orig ]; then
+    cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.orig
+    echo "✅ Default config backed up to /etc/haproxy/haproxy.cfg.orig"
+fi
 
-cat <<EOF | tee /etc/haproxy/haproxy.cfg > /dev/null
+echo "⚙️ [3/5] Creating Modular Config Files..."
+
+# --- 00-global.cfg ---
+cat <<EOF | tee /etc/haproxy/conf.d/00-global.cfg > /dev/null
 global
     log /dev/log local0
-    log /dev/log local1 notice
     user haproxy
     group haproxy
     daemon
-
-    # --- Performance Tuning ---
     maxconn 100000
-    # HAProxy 3.0 ใช้คอร์ทั้งหมดอัตโนมัติ แต่ระบุเพื่อความชัดเจนได้
     nbthread $(nproc)
     stats socket /var/lib/haproxy/stats expose-fd listeners level admin
-    
-    # Optimize for large objects (S3)
     tune.bufsize 32768
     tune.maxrewrite 1024
 
@@ -53,38 +48,21 @@ defaults
     option http-keep-alive
     option forwardfor
     option redispatch
-    
-    # --- S3 Specific Timeouts ---
     timeout connect 5s
     timeout client 300s
     timeout server 300s
     timeout http-keep-alive 60s
     timeout http-request 10s
-    
     maxconn 50000
+EOF
 
-frontend stats
-    bind *:8404
-    description "HAProxy Statistics and Prometheus Metrics"
-    # HAProxy 3.0 จาก PPA มาพร้อม Prometheus support อยู่แล้ว
-    http-request use-service prometheus-exporter if { path /metrics }
-    
-    stats enable
-    stats uri /stats
-    stats refresh 10s
-    stats admin if LOCALHOST
-
+# --- 10-s3-rgw.cfg ---
+cat <<EOF | tee /etc/haproxy/conf.d/10-s3-rgw.cfg > /dev/null
 frontend s3_frontend
     bind *:80
     description "Main Entry for Ceph RGW"
     log-format "%ci:%cp [%t] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r"
     default_backend rgw_back
-
-frontend fe_ceph_dashboard
-    bind *:8443
-    mode tcp
-    option tcplog
-    default_backend be_ceph_dashboard
 
 backend rgw_back
     description "Ceph RGW Cluster"
@@ -92,37 +70,64 @@ backend rgw_back
     option httpchk GET /
     http-check expect status 200
     # server rgw-node1 192.168.1.11:8080 check inter 2s
+EOF
+
+# --- 20-dashboard.cfg ---
+cat <<EOF | tee /etc/haproxy/conf.d/20-dashboard.cfg > /dev/null
+frontend fe_ceph_dashboard
+    bind *:8443
+    mode tcp
+    option tcplog
+    default_backend be_ceph_dashboard
 
 backend be_ceph_dashboard
     mode tcp
     option httpchk GET /
     http-check expect status 200
-    # ส่ง Health Check แบบ SSL โดยไม่ตรวจใบเซอร์
+    # ใช้ Check-SSL เพื่อแยก Active/Standby MGR
     server lab-mgr01 172.71.1.102:8443 check check-ssl verify none
     server lab-mgr02 172.71.1.103:8443 check check-ssl verify none
 EOF
 
-echo "🔄 [4/4] Restarting and Enabling Service..."
-# ปรับแต่ง Resource Limit ผ่าน Systemd Drop-in (สำหรับ Package install)
-mkdir -p /etc/systemd/system/haproxy.service.d/
-cat <<EOF | tee /etc/systemd/system/haproxy.service.d/limits.conf > /dev/null
-[Service]
-LimitNOFILE=1048576
+# --- 30-metrics.cfg ---
+cat <<EOF | tee /etc/haproxy/conf.d/30-metrics.cfg > /dev/null
+frontend stats_prometheus
+    bind *:8404
+    description "HAProxy Monitoring"
+    http-request use-service prometheus-exporter if { path /metrics }
+    stats enable
+    stats uri /stats
+    stats refresh 10s
+    stats admin if LOCALHOST
 EOF
 
+echo "🛠️ [4/5] Modifying Systemd to load conf.d..."
+# สร้าง Drop-in file เพื่อแก้ไข ExecStart โดยไม่ต้องยุ่งกับไฟล์หลักของระบบ
+mkdir -p /etc/systemd/system/haproxy.service.d/
+cat <<EOF | tee /etc/systemd/system/haproxy.service.d/override.conf > /dev/null
+[Service]
+# ขยาย Limit ไฟล์สำหรับงานหนัก
+LimitNOFILE=1048576
+# ล้าง ExecStart เดิมและระบุใหม่ให้โหลดไฟล์จาก conf.d
+ExecStart=
+ExecStart=/usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d/ -p /run/haproxy.pid
+EOF
+
+echo "🔄 [5/5] Restarting HAProxy..."
 systemctl daemon-reload
 systemctl enable haproxy
 systemctl restart haproxy
 
 echo ""
 echo "========================================================"
-echo "🎯 HAProxy 3.0 Installation via PPA Complete!"
+echo "🎯 HAProxy 3.0 Modular Installation Complete!"
 echo "========================================================"
-echo "✅ Install Method:  APT (PPA:vbernat)"
-echo "✅ Version:         $(haproxy -v | awk '{print $3}')"
-echo "✅ S3 Optimized:    YES"
-echo "✅ Active/Standby:  Configured for Dashboard"
+echo "📂 Config Directory:  /etc/haproxy/conf.d/"
+echo "📄 Global Settings:   00-global.cfg"
+echo "📄 S3 RGW Settings:   10-s3-rgw.cfg"
+echo "📄 Dashboard:         20-dashboard.cfg"
+echo "📄 Metrics/Stats:     30-metrics.cfg"
 echo "--------------------------------------------------------"
-echo "📈 Stats UI:        http://$(hostname -I | awk '{print $1}'):8404/stats"
-echo "📊 Metrics:          http://$(hostname -I | awk '{print $1}'):8404/metrics"
+echo "✅ Default Config kept as reference in /etc/haproxy/haproxy.cfg"
+echo "✅ Monitoring: http://$(hostname -I | awk '{print $1}'):8404/stats"
 echo "========================================================"
