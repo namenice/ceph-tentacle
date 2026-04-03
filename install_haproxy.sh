@@ -141,33 +141,20 @@ backend rgw_back
     # server rgw-node2 192.168.1.12:8080 check inter 2s rise 2 fall 3
 
 # --- Frontend สำหรับ Ceph Dashboard ---
-frontend ceph_dashboard_fe
-    bind *:8080              # เปลี่ยน Port ตามที่ต้องการ (เช่น 8080 หรือ 8443)
-    description "Ceph Dashboard Frontend"
-    
-    # กรณีต้องการทำ SSL Offloading ในอนาคต ให้มาเพิ่มที่นี่
-    default_backend ceph_dashboard_be
+frontend fe_ceph_dashboard
+    bind *:844-
+    mode tcp              # เปลี่ยนเป็น TCP เพื่อให้ Browser คุยกับ Ceph โดยตรง
+    option tcplog
+    default_backend be_ceph_dashboard
 
-# --- Backend สำหรับ Ceph Dashboard (Active/Standby) ---
-backend ceph_dashboard_be
-    description "Ceph Manager Dashboard Nodes"
-    balance roundrobin
-    
-    # สั่งให้ HAProxy เช็คว่าเครื่องไหนเป็น Active
-    # Active Node จะตอบกลับเป็น 200 OK
-    # Standby Node มักจะตอบเป็น 302/303 Redirect หรือไม่ตอบเลย
+backend be_ceph_dashboard
+    mode tcp
     option httpchk GET /
     http-check expect status 200
-    
-    # เพิ่มความต่อเนื่องของ Session (Sticky Session) 
-    # เพราะ Dashboard มีการ Login ถ้าสลับเครื่องไปมาจะหลุด
-    cookie SERVERID insert indirect nocache
 
-    # รายชื่อเครื่อง MGR (แก้ไข IP และ Port ตามจริง)
-    # หมายเหตุ: ถ้า Dashboard เป็น HTTPS (Self-signed) ต้องใส่ 'check ssl verify none'
-    server mgr-node1 192.168.1.11:8443 check ssl verify none cookie mgr1
-    server mgr-node2 192.168.1.12:8443 check ssl verify none cookie mgr2
-    server mgr-node3 192.168.1.13:8443 check ssl verify none cookie mgr3
+    server lab-mgr01 172.71.1.102:8443 check check-ssl verify none
+    server lab-mgr02 172.71.1.103:8443 check check-ssl verify none
+
 EOF
 
 echo "🔄 Restarting and Enabling Service..."
