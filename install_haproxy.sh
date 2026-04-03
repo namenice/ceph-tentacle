@@ -57,18 +57,18 @@ EOF
 
 # --- 10-s3-rgw.cfg ---
 cat <<EOF | tee /etc/haproxy/conf.d/10-s3-rgw.cfg > /dev/null
-frontend s3_frontend
+frontend fe_rgw
     bind *:80
     description "Main Entry for Ceph RGW"
     log-format "%ci:%cp [%t] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r"
-    default_backend rgw_back
+    default_backend be_rgw
 
-backend rgw_back
+backend be_rgw
     description "Ceph RGW Cluster"
     balance roundrobin
     option httpchk GET /
     http-check expect status 200
-    # server rgw-node1 192.168.1.11:8080 check inter 2s
+    server rgw-node1 172.71.1.106:80 check inter 2s
 EOF
 
 # --- 20-dashboard.cfg ---
