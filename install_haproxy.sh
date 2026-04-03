@@ -35,7 +35,6 @@ global
     group haproxy
     daemon
     maxconn 100000
-    nbthread $(nproc)
     stats socket /var/lib/haproxy/stats expose-fd listeners level admin
     tune.bufsize 32768
     tune.maxrewrite 1024
