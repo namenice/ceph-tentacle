@@ -2,7 +2,7 @@
 
 # --- 1. Configuration ---
 export VAULT_ADDR='http://127.0.0.1:8200'
-KEY_FILE="/etc/vault.d/vault_keys.txt"
+KEY_FILE="/etc/vault.d/.vault_keys.txt"
 POLICY_NAME="rgw-sse-s3"
 POLICY_FILE="/etc/vault.d/rgw-sse-s3-policy.hcl"
 ROLE_NAME="rgw-role"
