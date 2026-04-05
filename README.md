@@ -35,6 +35,10 @@ Install Hashicorp Vault Agent
 ```text
 curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_hashicorp_vault_agent.sh | sudo bash
 ```
+Setup Hashicorp Vault Policy S3
+```text
+curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/setup_hashicorp_vault_policy_s3.sh | sudo bash
+```
 Destroy Hashicorp Vault Server
 ```text
 curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/destroy_hashicorp_vault_server.sh | sudo bash
