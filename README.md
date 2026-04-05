@@ -37,11 +37,11 @@ curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_
 ```
 Destroy Hashicorp Vault Server
 ```text
-curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_hashicorp_vault_server.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/destroy_hashicorp_vault_server.sh | sudo bash
 ```
 Destroy Hashicorp Vault Agent
 ```text
-curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_hashicorp_vault_agent.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/destroy_hashicorp_vault_agent.sh | sudo bash
 ```
 
 
