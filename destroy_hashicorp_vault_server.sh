@@ -21,7 +21,7 @@ apt purge -y vault 2>/dev/null
 rm -f /usr/bin/vault /usr/local/bin/vault
 
 # 4. ลบข้อมูลและ Config (ข้อมูลความลับจะหายถาวร!)
-rm -rf /etc/vault.d/vault.hcl
+rm -rf /etc/vault.d
 rm -rf /opt/vault
 rm -rf /var/lib/vault
 
