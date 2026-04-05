@@ -1,9 +1,11 @@
 #!/bin/bash
 
-# --- Configuration (ปรับเปลี่ยนตาม IP จริงของคุณ) ---
+# --- Configuration ---
 VAULT_SERVER_URL="http://172.71.1.184:8200"
-VAULT_CONFIG_DIR="/etc/vault.d"
-AUTH_DIR="$VAULT_CONFIG_DIR/auth"
+# ปรับ Path หลักไปที่ /etc/vault.d/agent/
+AGENT_BASE_DIR="/etc/vault.d/agent"
+AUTH_DIR="$AGENT_BASE_DIR/auth"
+AGENT_CONFIG="$AGENT_BASE_DIR/agent-config.hcl"
 
 # ตรวจสอบสิทธิ์ Root
 if [[ $EUID -ne 0 ]]; then
@@ -11,7 +13,7 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# รับค่า RoleID และ SecretID จาก User
+# รับค่า RoleID และ SecretID
 read -p "🔑 กรอก RoleID: " ROLE_ID
 read -p "🔑 กรอก SecretID: " SECRET_ID
 
@@ -25,21 +27,24 @@ else
     echo "✅ Vault ติดตั้งอยู่แล้ว"
 fi
 
-echo "📂 [2/5] เตรียมโครงสร้างโฟลเดอร์และสิทธิ์การเข้าถึง..."
+echo "📂 [2/5] เตรียมโครงสร้างโฟลเดอร์ใน $AGENT_BASE_DIR..."
+# สร้าง Directory แบบ Recursive
 mkdir -p "$AUTH_DIR"
-touch "$VAULT_CONFIG_DIR/.vault-token"
-touch "$VAULT_CONFIG_DIR/.vault-agent-cache.json"
 
-# เขียน RoleID และ SecretID ลงไฟล์
+# สร้างไฟล์หลอกสำหรับ Sink และ Cache ใน Path ใหม่
+touch "$AGENT_BASE_DIR/.vault-token"
+touch "$AGENT_BASE_DIR/.vault-agent-cache.json"
+
+# เขียน RoleID และ SecretID
 echo "$ROLE_ID" > "$AUTH_DIR/role-id"
 echo "$SECRET_ID" > "$AUTH_DIR/secret-id"
 
-# ตั้งสิทธิ์ให้ user vault เท่านั้นที่อ่านได้
-chown -R vault:vault "$VAULT_CONFIG_DIR"
+# ตั้งสิทธิ์ให้ user vault เข้าถึง Folder Agent
+chown -R vault:vault "$AGENT_BASE_DIR"
 chmod 600 "$AUTH_DIR/role-id" "$AUTH_DIR/secret-id"
 
 echo "📄 [3/5] สร้างไฟล์ config: agent-config.hcl..."
-cat <<EOF | tee "$VAULT_CONFIG_DIR/agent-config.hcl" > /dev/null
+cat <<EOF | tee "$AGENT_CONFIG" > /dev/null
 vault {
   address = "$VAULT_SERVER_URL"
 }
@@ -55,14 +60,14 @@ auto_auth {
 
   sink "file" {
     config = {
-      path = "$VAULT_CONFIG_DIR/.vault-token"
+      path = "$AGENT_BASE_DIR/.vault-token"
     }
   }
 }
 
 cache {
   use_auto_auth_token = true
-  path = "$VAULT_CONFIG_DIR/.vault-agent-cache.json"
+  path = "$AGENT_BASE_DIR/.vault-agent-cache.json"
 }
 
 listener "tcp" {
@@ -71,7 +76,7 @@ listener "tcp" {
 }
 EOF
 
-echo "⚙️ [4/5] สร้าง Systemd Service สำหรับ Vault Agent..."
+echo "⚙️ [4/5] สร้าง Systemd Service (ปรับ Path Config)..."
 cat <<EOF | tee /etc/systemd/system/vault-agent.service > /dev/null
 [Unit]
 Description=Vault Agent Service (Auto-auth for RGW)
@@ -81,7 +86,8 @@ Wants=network-online.target
 [Service]
 User=vault
 Group=vault
-ExecStart=/usr/bin/vault agent -config=$VAULT_CONFIG_DIR/agent-config.hcl
+# ชี้ไปที่ Path ใหม่
+ExecStart=/usr/bin/vault agent -config=$AGENT_CONFIG
 Restart=always
 RestartSec=10
 LimitNOFILE=65536
@@ -97,14 +103,14 @@ systemctl restart vault-agent
 
 echo ""
 echo "========================================================"
-echo "🎯 VAULT AGENT SETUP COMPLETED!"
+echo "🎯 VAULT AGENT SETUP COMPLETED (NEW PATH)!"
 echo "========================================================"
 sleep 2
-# ตรวจสอบสถานะเบื้องต้น
 systemctl status vault-agent --no-pager
 echo "--------------------------------------------------------"
-echo "🔍 ตรวจสอบสุขภาพของ Agent ผ่าน Listener (8100):"
-curl -s http://127.0.0.1:8100/v1/sys/health | grep -o '"initialized":true' || echo "⚠️  คำเตือน: Agent ยังไม่พร้อมใช้งาน โปรดตรวจสอบ log"
+echo "🔍 ตรวจสอบสุขภาพ (Listener 8100):"
+curl -s http://127.0.0.1:8100/v1/sys/health | grep -o '"initialized":true' || echo "⚠️  คำเตือน: Agent ยังไม่พร้อม"
 echo "--------------------------------------------------------"
-echo "📍 Token Sink: $VAULT_CONFIG_DIR/.vault-token"
+echo "📍 Config File : $AGENT_CONFIG"
+echo "📍 Token Sink  : $AGENT_BASE_DIR/.vault-token"
 echo "========================================================"
