@@ -1,0 +1,110 @@
+#!/bin/bash
+
+# --- Configuration (ปรับเปลี่ยนตาม IP จริงของคุณ) ---
+VAULT_SERVER_URL="http://172.71.1.184:8200"
+VAULT_CONFIG_DIR="/etc/vault.d"
+AUTH_DIR="$VAULT_CONFIG_DIR/auth"
+
+# ตรวจสอบสิทธิ์ Root
+if [[ $EUID -ne 0 ]]; then
+   echo "❌ โปรดรันสคริปต์นี้ด้วยสิทธิ์ root (sudo)"
+   exit 1
+fi
+
+# รับค่า RoleID และ SecretID จาก User
+read -p "🔑 กรอก RoleID: " ROLE_ID
+read -p "🔑 กรอก SecretID: " SECRET_ID
+
+echo "🚀 [1/5] ติดตั้ง Vault Binary..."
+if ! command -v vault &> /dev/null; then
+    apt update && apt install -y gpg coreutils curl wget
+    wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list
+    apt update && apt install -y vault
+else
+    echo "✅ Vault ติดตั้งอยู่แล้ว"
+fi
+
+echo "📂 [2/5] เตรียมโครงสร้างโฟลเดอร์และสิทธิ์การเข้าถึง..."
+mkdir -p "$AUTH_DIR"
+touch "$VAULT_CONFIG_DIR/.vault-token"
+touch "$VAULT_CONFIG_DIR/.vault-agent-cache.json"
+
+# เขียน RoleID และ SecretID ลงไฟล์
+echo "$ROLE_ID" > "$AUTH_DIR/role-id"
+echo "$SECRET_ID" > "$AUTH_DIR/secret-id"
+
+# ตั้งสิทธิ์ให้ user vault เท่านั้นที่อ่านได้
+chown -R vault:vault "$VAULT_CONFIG_DIR"
+chmod 600 "$AUTH_DIR/role-id" "$AUTH_DIR/secret-id"
+
+echo "📄 [3/5] สร้างไฟล์ config: agent-config.hcl..."
+cat <<EOF | tee "$VAULT_CONFIG_DIR/agent-config.hcl" > /dev/null
+vault {
+  address = "$VAULT_SERVER_URL"
+}
+
+auto_auth {
+  method "approle" {
+    mount_path = "auth/approle"
+    config = {
+      role_id_file_path   = "$AUTH_DIR/role-id"
+      secret_id_file_path = "$AUTH_DIR/secret-id"
+    }
+  }
+
+  sink "file" {
+    config = {
+      path = "$VAULT_CONFIG_DIR/.vault-token"
+    }
+  }
+}
+
+cache {
+  use_auto_auth_token = true
+  path = "$VAULT_CONFIG_DIR/.vault-agent-cache.json"
+}
+
+listener "tcp" {
+  address     = "0.0.0.0:8100"
+  tls_disable = 1
+}
+EOF
+
+echo "⚙️ [4/5] สร้าง Systemd Service สำหรับ Vault Agent..."
+cat <<EOF | tee /etc/systemd/system/vault-agent.service > /dev/null
+[Unit]
+Description=Vault Agent Service (Auto-auth for RGW)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=vault
+Group=vault
+ExecStart=/usr/bin/vault agent -config=$VAULT_CONFIG_DIR/agent-config.hcl
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "🔄 [5/5] เริ่มการทำงานของ Service..."
+systemctl daemon-reload
+systemctl enable vault-agent
+systemctl restart vault-agent
+
+echo ""
+echo "========================================================"
+echo "🎯 VAULT AGENT SETUP COMPLETED!"
+echo "========================================================"
+sleep 2
+# ตรวจสอบสถานะเบื้องต้น
+systemctl status vault-agent --no-pager
+echo "--------------------------------------------------------"
+echo "🔍 ตรวจสอบสุขภาพของ Agent ผ่าน Listener (8100):"
+curl -s http://127.0.0.1:8100/v1/sys/health | grep -o '"initialized":true' || echo "⚠️  คำเตือน: Agent ยังไม่พร้อมใช้งาน โปรดตรวจสอบ log"
+echo "--------------------------------------------------------"
+echo "📍 Token Sink: $VAULT_CONFIG_DIR/.vault-token"
+echo "========================================================"
