@@ -27,11 +27,11 @@ bash install_keepalived.sh
 ```
 ---
 
-Install Hashicorp Vault
+Install Hashicorp Vault Server
 ```text
 curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_hashicorp_vault.sh | sudo bash
 ```
-Install Hashicorp Vault
+Install Hashicorp Vault Agent
 ```text
 curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_hashicorp_vault_agent.sh | sudo bash
 ```
