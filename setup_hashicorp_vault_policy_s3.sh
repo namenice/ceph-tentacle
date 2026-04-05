@@ -110,14 +110,26 @@ vault write auth/approle/role/$ROLE_NAME \
     token_ttl=1h \
     token_max_ttl=4h > /dev/null
 
-# ดึงค่าสุดท้ายออกมาแสดงผล
+# ดึงค่าด้วย jq
 ROLE_ID=$(vault read -format=json auth/approle/role/$ROLE_NAME/role-id | jq -r '.data.role_id')
 SECRET_ID=$(vault write -f -format=json auth/approle/role/$ROLE_NAME/secret-id | jq -r '.data.secret_id')
 
+# ลบค่าเก่าออกก่อน (ถ้ามี) เพื่อป้องกันไฟล์บวมหรือข้อมูลสับสน
+sed -i '/Role ID:/d' "$KEY_FILE"
+sed -i '/Secret ID:/d' "$KEY_FILE"
+
+# บันทึกค่าใหม่ลงท้ายไฟล์
+echo "Role ID: $ROLE_ID" >> "$KEY_FILE"
+echo "Secret ID: $SECRET_ID" >> "$KEY_FILE"
+
 echo ""
 echo "========================================================"
-echo "🎯 VAULT READY (JSON-POWERED SETUP)"
+echo "🎯 VAULT SERVER SETUP COMPLETED!"
 echo "========================================================"
-echo "👉 ROLE_ID   : $ROLE_ID"
-echo "👉 SECRET_ID : $SECRET_ID"
+echo "✅ Role ID   : $ROLE_ID"
+echo "✅ Secret ID : $SECRET_ID"
+echo "--------------------------------------------------------"
+echo "📁 ข้อมูลทั้งหมดถูกบันทึกไว้ใน: $KEY_FILE"
+echo "💡 คุณสามารถดึงค่าไปใช้ต่อด้วยคำสั่ง:"
+echo "   grep 'Role ID' $KEY_FILE | awk '{print \$NF}'"
 echo "========================================================"
