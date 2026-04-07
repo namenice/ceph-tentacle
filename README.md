@@ -52,5 +52,8 @@ Install MinIO
 ```text
 curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_minio.sh | sudo bash
 ```
-
+Destroy MinIO
+```text
+curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/destroy_minio.sh | sudo bash
+```
 
