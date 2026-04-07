@@ -57,18 +57,40 @@ EOF
 
 # --- 10-s3-rgw.cfg ---
 cat <<EOF | tee /etc/haproxy/conf.d/10-s3-rgw.cfg > /dev/null
-frontend fe_rgw
-    bind *:80
+frontend s3_frontend
+    bind *:8080
+    mode http
     description "Main Entry for Ceph RGW"
-    log-format "%ci:%cp [%t] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r"
-    default_backend be_rgw
 
-backend be_rgw
+    option httplog
+    log-format "%ci:%cp [%t] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r"
+
+    capture request header Host len 100
+    capture request header User-Agent len 300
+    capture request header Authorization len 500
+    capture request header X-Amz-Date len 100
+    capture request header X-Amz-Content-Sha256 len 100
+    capture request header X-Amz-Security-Token len 500
+    capture request header Content-Length len 50
+    capture request header Content-Type len 100
+    capture request header X-Forwarded-For len 100
+    capture request header X-Amz-Credential len 200
+    capture request header X-Amz-Algorithm len 100
+    capture request header X-Amz-SignedHeaders len 200
+    capture request header X-Amz-Expires len 50
+    capture request header X-Amz-Signature len 300
+
+    default_backend rgw_back
+
+backend rgw_back
+    mode http
     description "Ceph RGW Cluster"
     balance roundrobin
     option httpchk GET /
     http-check expect status 200
-    server rgw-node1 172.71.1.106:80 check inter 2s
+
+    server rgw-node1 172.71.1.103:80 check inter 2s
+    server rgw-node2 172.71.1.104:80 check inter 2s
 EOF
 
 # --- 20-dashboard.cfg ---
