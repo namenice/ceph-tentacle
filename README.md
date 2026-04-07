@@ -47,5 +47,10 @@ Destroy Hashicorp Vault Agent
 ```text
 curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/destroy_hashicorp_vault_agent.sh | sudo bash
 ```
+---
+Install MinIO
+```text
+curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/install_minio.sh | sudo bash
+```
 
 
