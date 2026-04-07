@@ -26,14 +26,6 @@ rm -f minio.deb
 # 6. รีโหลด Systemd daemon
 sudo systemctl daemon-reload
 
-# 7. ถามความสมัครใจในการลบข้อมูล (Data)
 echo "------------------------------------------------"
-read -p "คุณต้องการลบข้อมูลทั้งหมดใน $DATA_DIR ด้วยหรือไม่? (y/N): " confirm
-if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-    sudo rm -rf $DATA_DIR
-    echo "✅ ลบ Folder ข้อมูลเรียบร้อยแล้ว"
-else
-    echo "📂 เก็บ Folder ข้อมูลเอาไว้ที่ $DATA_DIR"
-fi
-
 echo "--- ✨ ลบ MinIO ออกจากระบบเรียบร้อยแล้ว! ---"
+echo "------------------------------------------------"
