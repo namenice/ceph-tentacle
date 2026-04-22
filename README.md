@@ -25,6 +25,10 @@ vi install_keepalived.sh
 ```text
 bash install_keepalived.sh
 ```
+Destroy Keepalived
+```text
+curl -sSL https://raw.githubusercontent.com/namenice/ceph-tentacle/main/destroy_keepalived.sh | sudo bash
+```
 ---
 
 Install Hashicorp Vault Server
