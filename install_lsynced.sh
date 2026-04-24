@@ -33,7 +33,7 @@ echo "✅ SSH Connection: OK"
 
 # --- 3. Verify Rsync on Target ---
 echo "🔍 [Step 2] Checking rsync on target host..."
-ssh -p $SSH_PORT $REMOTE_USER@$TARGET_IP "which rsync" > /dev/null 2>&1
+ssh -p $SSH_PORT $REMOTE_USER@$TARGET_IP "which rsync && rsync --version | head -n 1" > /dev/null 2>&1
 if [[ $? -ne 0 ]]; then
     echo "❌ Error: rsync is not installed on $TARGET_IP."
     echo "   Please run: apt install rsync -y (on target host)"
