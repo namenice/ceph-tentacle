@@ -58,6 +58,8 @@ echo -e "🚀 ${GREEN}[Start]${NC} Preparing Host (Detailed output redirected to
 
 # --- 3. Set Timezone ---
 timedatectl set-timezone Asia/Bangkok >> "$LOG_FILE" 2>&1
+sudo locale-gen en_GB.UTF-8 >> "$LOG_FILE" 2>&1
+sudo update-locale LC_TIME=en_GB.UTF-8 >> "$LOG_FILE" 2>&1
 
 # --- 4. Update & Install ---
 (apt-get update -y && apt-get upgrade -y) >> "$LOG_FILE" 2>&1 &
