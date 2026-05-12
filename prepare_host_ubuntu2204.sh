@@ -82,7 +82,6 @@ cat <<EOF | sudo tee /etc/security/limits.d/ceph.conf > /dev/null
 * hard nofile 1048576
 EOF
 
-
 # --- 9. Install Toolling ---
 echo "tools: Installing debugging tools..."
 apt install -y htop iotop iftop net-tools smartmontools
