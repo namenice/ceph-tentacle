@@ -158,63 +158,84 @@ echo "   - Detected RAM   : $((TOTAL_MEM_KB / 1024 / 1024)) GB"
 echo "   - Disk Count     : $DISK_COUNT Physical Disk(s)"
 echo "   - Node Profile   : $NODE_TYPE"
 echo ""
-echo -e "🌐 ${GREEN}NETWORK INTERFACES (Full Matrix):${NC}"
-# วนลูปจากทุก interface ในเครื่อง
-ls /sys/class/net/ | while read ifname; do
-    # Skip loopback และไฟล์ระบบของ bonding
-    [[ "$ifname" == "lo" ]] && continue
-    [[ "$ifname" == "bonding_masters" ]] && continue
+echo -e "🌐 ${GREEN}NETWORK INTERFACES (Hierarchy Tree):${NC}"
+# สร้างรายการเพื่อเช็คว่า Interface ไหนถูกจัดการไปแล้ว
+PROCESSED_IFS=()
 
-    # 1. ดึง IP Address
-    IPADDR=$(ip -4 -br addr show "$ifname" 2>/dev/null | awk '{print $3}')
-    [[ -z "$IPADDR" ]] && IPADDR="No IP"
+# 1. จัดกลุ่ม Master Bond และลูกๆ (Slaves & VLANs)
+for master_bond in $(ls /sys/class/net/ 2>/dev/null); do
+    if [ -d "/sys/class/net/$master_bond/bonding" ]; then
 
-    # 2. เช็ค MTU และกำหนด Label (Jumbo / Std)
-    MTU_RAW=$(cat /sys/class/net/$ifname/mtu 2>/dev/null)
-    if [ "$MTU_RAW" -eq 9000 ]; then
-        MTU_DISPLAY="${GREEN}${MTU_RAW} (Jumbo)${NC}"
-    elif [ "$MTU_RAW" -eq 1500 ]; then
-        MTU_DISPLAY="${NC}${MTU_RAW} (Std)${NC}"
-    else
-        MTU_DISPLAY="${RED}${MTU_RAW}${NC}"
+        # --- 1.1 แสดง Physical Slaves (ขาแลนที่มารวมร่างกัน) ---
+        SLAVES_LIST=""
+        for slave in $(cat /sys/class/net/$master_bond/bonding/slaves 2>/dev/null); do
+            S_MTU=$(cat /sys/class/net/$slave/mtu 2>/dev/null)
+            S_STATE=$(cat /sys/class/net/$slave/operstate 2>/dev/null | tr '[:lower:]' '[:upper:]')
+            [[ "$S_STATE" == "UP" ]] && S_COLOR="${GREEN}" || S_COLOR="${RED}"
+            SLAVES_LIST+="${S_COLOR}${slave}${NC} (MTU:${S_MTU}), "
+            PROCESSED_IFS+=("$slave")
+        done
+        echo -e "   ${SLAVES_LIST%, }"
+
+        # --- 1.2 แสดง Master Bond ---
+        B_MODE=$(cat /sys/class/net/$master_bond/bonding/mode | awk '{print $1}')
+        B_MTU=$(cat /sys/class/net/$master_bond/mtu 2>/dev/null)
+        B_STATE=$(cat /sys/class/net/$master_bond/operstate 2>/dev/null | tr '[:lower:]' '[:upper:]')
+        [[ "$B_STATE" == "UP" ]] && B_COLOR="${GREEN}" || B_COLOR="${RED}"
+        [[ "$B_STATE" == "LOWERLAYERDOWN" ]] && { B_STATE="L-DOWN"; B_COLOR="${RED}"; }
+
+        echo -e "   └── ${GREEN}${master_bond}${NC} [Bond Master ($B_MODE)] Status: ${B_COLOR}${B_STATE}${NC}, MTU: ${B_MTU}"
+        PROCESSED_IFS+=("$master_bond")
+
+        # --- 1.3 แสดง VLANs ที่เกาะอยู่ใต้ Bond นี้ ---
+        for vlan in $(ls /sys/class/net/); do
+            # เช็คความสัมพันธ์ Parent-Child จากระบบโดยตรง
+            PARENT=$(ip -d link show "$vlan" 2>/dev/null | grep -Po 'link \K[^ ]+' | head -n 1)
+
+            if [[ "$PARENT" == "$master_bond" ]] || [[ "$vlan" == "$master_bond."* ]]; then
+                # ถ้าเป็นลูกของ Bond นี้
+                V_ID=$(ip -d link show "$vlan" | grep -Po 'vlan protocol .* id \K\d+')
+                V_MTU=$(cat /sys/class/net/$vlan/mtu 2>/dev/null)
+                V_STATE=$(cat /sys/class/net/$vlan/operstate 2>/dev/null | tr '[:lower:]' '[:upper:]')
+
+                [[ "$V_STATE" == "UP" ]] && V_COLOR="${GREEN}" || V_COLOR="${RED}"
+                [[ "$V_STATE" == "LOWERLAYERDOWN" ]] && { V_STATE="L-DOWN"; V_COLOR="${RED}"; }
+
+                # ตรวจสอบ MTU 9000 vs 1500
+                if [ "$V_MTU" -eq 9000 ]; then V_MTU_L="${GREEN}9000 (Jumbo)${NC}"; else V_MTU_L="${NC}1500 (Std)${NC}"; fi
+
+                echo -e "       ├── ${GREEN}${vlan}${NC} [VLAN: ${V_ID}] Status: ${V_COLOR}${V_STATE}${NC}, MTU: ${V_MTU_L}"
+                PROCESSED_IFS+=("$vlan")
+
+                # --- 1.4 แสดง IP ของ VLAN นั้นๆ ---
+                V_IP=$(ip -4 -br addr show "$vlan" 2>/dev/null | awk '{print $3}')
+                if [ ! -z "$V_IP" ]; then
+                    echo -e "       │   └── IPv4: ${GREEN}${V_IP}${NC}"
+                fi
+            fi
+        done
+        echo "" # เว้นบรรทัดเพื่อความสวยงาม
     fi
+done
 
-    # 3. เช็ค VLAN ID และ Parent
-    VLAN_ID="None"
-    PARENT=""
-    if [ -f "/proc/net/vlan/$ifname" ] || ip -d link show "$ifname" | grep -q "vlan"; then
-        VLAN_ID=$(ip -d link show "$ifname" | grep -Po 'vlan protocol .* id \K\d+')
-        PARENT=$(ip -d link show "$ifname" | grep -Po 'link \K[^ ]+' | head -n 1)
+# 2. แสดง Physical อื่นๆ ที่ไม่ได้ทำ Bond (ถ้ามี)
+FIRST_PHYS=true
+for phys in $(ls /sys/class/net/); do
+    [[ "$phys" == "lo" ]] && continue
+    [[ "$phys" == "bonding_masters" ]] && continue
+
+    # ถ้ายังไม่ถูกแสดงผลในกลุ่ม Bond
+    if [[ ! " ${PROCESSED_IFS[@]} " =~ " ${phys} " ]]; then
+        if $FIRST_PHYS; then echo -e "🌐 OTHER INTERFACES:"; FIRST_PHYS=false; fi
+
+        P_MTU=$(cat /sys/class/net/$phys/mtu 2>/dev/null)
+        P_STATE=$(cat /sys/class/net/$phys/operstate 2>/dev/null | tr '[:lower:]' '[:upper:]')
+        P_IP=$(ip -4 -br addr show "$phys" 2>/dev/null | awk '{print $3}')
+        [[ -z "$P_IP" ]] && P_IP="No IP"
+        [[ "$P_STATE" == "UP" ]] && P_COLOR="${GREEN}" || P_COLOR="${RED}"
+
+        echo -e "   - ${phys} : Status: ${P_COLOR}${P_STATE}${NC} | IP: ${P_IP} | MTU: ${P_MTU}"
     fi
-
-    # 4. วิเคราะห์ประเภท Interface และ Bond Mode
-    TYPE_INFO="Physical"
-    if [ -d "/sys/class/net/$ifname/bonding" ]; then
-        BMODE=$(cat /sys/class/net/$ifname/bonding/mode | awk '{print $1}')
-        TYPE_INFO="Bond Master ($BMODE)"
-    elif [ -f "/sys/class/net/$ifname/bonding_slave/master" ]; then
-        MASTER=$(cat /sys/class/net/$ifname/bonding_slave/master)
-        TYPE_INFO="Slave of $MASTER"
-    elif [[ ! -z "$PARENT" ]]; then
-        TYPE_INFO="VLAN on $PARENT"
-    fi
-
-    # 5. เช็คสถานะ Link
-    RAW_STATE=$(cat /sys/class/net/$ifname/operstate 2>/dev/null)
-    OPERSTATE=$(echo $RAW_STATE | tr '[:lower:]' '[:upper:]')
-
-    if [[ "$OPERSTATE" == "UP" ]]; then
-        STATE_COLOR="${GREEN}"
-    elif [[ "$OPERSTATE" == "LOWERLAYERDOWN" ]]; then
-        STATE_COLOR="${RED}"
-        OPERSTATE="L-DOWN"
-    else
-        STATE_COLOR="${RED}"
-    fi
-
-    # ใช้ %-22b เพื่อรองรับรหัสสีและทำให้คอลัมน์ MTU ตรงกัน
-    printf "   - %-15s : Status: ${STATE_COLOR}%-7s${NC} | IP: %-18s | MTU: %-22b | VLAN: %-5s | Type: %s\n" \
-            "$ifname" "$OPERSTATE" "$IPADDR" "$MTU_DISPLAY" "$VLAN_ID" "$TYPE_INFO"
 done
 echo ""
 echo -e "⚙️ ${GREEN}KERNEL & MEMORY TUNING (Applied):${NC}"
