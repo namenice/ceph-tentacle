@@ -158,23 +158,55 @@ echo "   - Detected RAM   : $((TOTAL_MEM_KB / 1024 / 1024)) GB"
 echo "   - Disk Count     : $DISK_COUNT Physical Disk(s)"
 echo "   - Node Profile   : $NODE_TYPE"
 echo ""
-echo -e "🌐 ${GREEN}NETWORK INTERFACES (IPv4):${NC}"
-# Logic ปรับปรุงใหม่เพื่อเช็ค Bond/VLAN Hierarchy
-ip -4 -o addr show | awk '{print $2, $4}' | while read ifname ipaddr; do
+echo -e "🌐 ${GREEN}NETWORK INTERFACES (Full Matrix):${NC}"
+# วนลูปจากทุก interface ในเครื่อง
+ls /sys/class/net/ | while read ifname; do
+    # Skip loopback และไฟล์ระบบของ bonding
     [[ "$ifname" == "lo" ]] && continue
+    [[ "$ifname" == "bonding_masters" ]] && continue
 
-    # 1. ดึงชื่อจริง (กรณีมี @ เช่น bond1.3951@bond1)
-    REAL_IF=$(echo $ifname | cut -d'@' -f1)
-    PARENT=$(ip -d link show "$REAL_IF" | grep -Po '(\w+)(?=@)|link \K[^ ]+' | head -n 1)
+    # 1. ดึง IP Address
+    IPADDR=$(ip -4 -br addr show "$ifname" 2>/dev/null | awk '{print $3}')
+    [[ -z "$IPADDR" ]] && IPADDR="No IP"
 
     # 2. เช็ค MTU
-    MTU=$(cat /sys/class/net/$REAL_IF/mtu 2>/dev/null)
+    MTU=$(cat /sys/class/net/$ifname/mtu 2>/dev/null)
 
-    # 3. เช็ค VLAN ID (ดึงจาก id xxxx โดยตรง)
-    VLAN_ID=$(ip -d link show "$REAL_IF" | grep -Po 'vlan protocol .* id \K\d+')
-    [[ -z "$VLAN_ID" ]] && VLAN_ID="None"
+    # 3. เช็ค VLAN ID และ Parent
+    VLAN_ID="None"
+    PARENT=""
+    if [ -f "/proc/net/vlan/$ifname" ] || ip -d link show "$ifname" | grep -q "vlan"; then
+        VLAN_ID=$(ip -d link show "$ifname" | grep -Po 'vlan protocol .* id \K\d+')
+        PARENT=$(ip -d link show "$ifname" | grep -Po 'link \K[^ ]+' | head -n 1)
+    fi
 
-    printf "   - %-15s : IP: %-18s | MTU: %-5s | VLAN: %-5s \n" "$REAL_IF" "$ipaddr" "$MTU" "$VLAN_ID"
+    # 4. วิเคราะห์ประเภท Interface และ Bond Mode
+    TYPE_INFO="Physical"
+    if [ -d "/sys/class/net/$ifname/bonding" ]; then
+        BMODE=$(cat /sys/class/net/$ifname/bonding/mode | awk '{print $1}')
+        TYPE_INFO="Bond Master ($BMODE)"
+    elif [ -f "/sys/class/net/$ifname/bonding_slave/master" ]; then
+        MASTER=$(cat /sys/class/net/$ifname/bonding_slave/master)
+        TYPE_INFO="Slave of $MASTER"
+    elif [[ ! -z "$PARENT" ]]; then
+        TYPE_INFO="VLAN on $PARENT"
+    fi
+
+    # 5. เช็คสถานะ Link (รองรับ LOWERLAYERDOWN สำหรับ LACP)
+    RAW_STATE=$(cat /sys/class/net/$ifname/operstate 2>/dev/null)
+    OPERSTATE=$(echo $RAW_STATE | tr '[:lower:]' '[:upper:]')
+
+    if [[ "$OPERSTATE" == "UP" ]]; then
+        STATE_COLOR="${GREEN}"
+    elif [[ "$OPERSTATE" == "LOWERLAYERDOWN" ]]; then
+        STATE_COLOR="${RED}"
+        OPERSTATE="L-DOWN" # ย่อเพื่อให้ตารางสวยงาม
+    else
+        STATE_COLOR="${RED}"
+    fi
+
+    printf "   - %-15s : Status: ${STATE_COLOR}%-7s${NC} | IP: %-18s | MTU: %-5s | VLAN: %-5s | Type: %s\n" \
+           "$ifname" "$OPERSTATE" "$IPADDR" "$MTU" "$VLAN_ID" "$TYPE_INFO"
 done
 echo ""
 echo -e "⚙️ ${GREEN}KERNEL & MEMORY TUNING (Applied):${NC}"
