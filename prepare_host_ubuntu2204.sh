@@ -169,8 +169,15 @@ ls /sys/class/net/ | while read ifname; do
     IPADDR=$(ip -4 -br addr show "$ifname" 2>/dev/null | awk '{print $3}')
     [[ -z "$IPADDR" ]] && IPADDR="No IP"
 
-    # 2. เช็ค MTU
-    MTU=$(cat /sys/class/net/$ifname/mtu 2>/dev/null)
+    # 2. เช็ค MTU และกำหนด Label (Jumbo / Std)
+    MTU_RAW=$(cat /sys/class/net/$ifname/mtu 2>/dev/null)
+    if [ "$MTU_RAW" -eq 9000 ]; then
+        MTU_DISPLAY="${GREEN}${MTU_RAW} (Jumbo)${NC}"
+    elif [ "$MTU_RAW" -eq 1500 ]; then
+        MTU_DISPLAY="${NC}${MTU_RAW} (Std)${NC}"
+    else
+        MTU_DISPLAY="${RED}${MTU_RAW}${NC}"
+    fi
 
     # 3. เช็ค VLAN ID และ Parent
     VLAN_ID="None"
@@ -192,7 +199,7 @@ ls /sys/class/net/ | while read ifname; do
         TYPE_INFO="VLAN on $PARENT"
     fi
 
-    # 5. เช็คสถานะ Link (รองรับ LOWERLAYERDOWN สำหรับ LACP)
+    # 5. เช็คสถานะ Link
     RAW_STATE=$(cat /sys/class/net/$ifname/operstate 2>/dev/null)
     OPERSTATE=$(echo $RAW_STATE | tr '[:lower:]' '[:upper:]')
 
@@ -200,13 +207,14 @@ ls /sys/class/net/ | while read ifname; do
         STATE_COLOR="${GREEN}"
     elif [[ "$OPERSTATE" == "LOWERLAYERDOWN" ]]; then
         STATE_COLOR="${RED}"
-        OPERSTATE="L-DOWN" # ย่อเพื่อให้ตารางสวยงาม
+        OPERSTATE="L-DOWN"
     else
         STATE_COLOR="${RED}"
     fi
 
-    printf "   - %-15s : Status: ${STATE_COLOR}%-7s${NC} | IP: %-18s | MTU: %-5s | VLAN: %-5s | Type: %s\n" \
-           "$ifname" "$OPERSTATE" "$IPADDR" "$MTU" "$VLAN_ID" "$TYPE_INFO"
+    # ใช้ %-22b เพื่อรองรับรหัสสีและทำให้คอลัมน์ MTU ตรงกัน
+    printf "   - %-15s : Status: ${STATE_COLOR}%-7s${NC} | IP: %-18s | MTU: %-22b | VLAN: %-5s | Type: %s\n" \
+            "$ifname" "$OPERSTATE" "$IPADDR" "$MTU_DISPLAY" "$VLAN_ID" "$TYPE_INFO"
 done
 echo ""
 echo -e "⚙️ ${GREEN}KERNEL & MEMORY TUNING (Applied):${NC}"
