@@ -45,22 +45,34 @@ sleep 2 # รอให้ service เริ่มต้นสักครู่
 # --- 7. Kernel Tuning ---
 echo "⚙️ Tuning Kernel Parameters..."
 cat <<EOF | tee /etc/sysctl.d/90-ceph.conf > /dev/null
-net.core.somaxconn = 2048
+# Networking: รองรับ High Throughput สำหรับ OSD 16 ลูก
+net.core.somaxconn = 8192
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.ip_local_port_range = 1024 65535
-fs.file-max = 262144
-net.core.rmem_max = 26214400
-net.core.wmem_max = 26214400
+
+# TCP Buffer: ขยายเป็น 64MB เพื่อรองรับการส่งข้อมูลก้อนใหญ่ (Large Objects)
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+
+# Memory Safety: สำหรับเครื่อง RAM 376GB
+vm.swappiness = 5
+vm.min_free_kbytes = 4194304  # กั้น RAM 4GB ไว้ให้ Kernel ป้องกันเครื่องค้างตอน I/O Peak
+vm.max_map_count = 262144
+
+# File System: ตั้งให้สัมพันธ์กับ ulimit nofile
+fs.file-max = 4194304
 EOF
-sysctl --system > /dev/null
+sudo sysctl --system > /dev/null
 
 # --- 8. Set Resource Limits (Ulimits) ---
-echo "📋 Setting Ulimits..."
-cat <<EOF | tee /etc/security/limits.d/ceph.conf > /dev/null
+# --- Resource Limits (/etc/security/limits.d/ceph.conf) ---
+echo "📋 Configuring Resource Limits (nofile only)..."
+cat <<EOF | sudo tee /etc/security/limits.d/ceph.conf > /dev/null
+# ขยายเพดานการเปิดไฟล์เป็น 1 ล้าน (Mandatory for Ceph OSD/RGW)
 * soft nofile 1048576
 * hard nofile 1048576
-* soft nproc unlimited
-* hard nproc unlimited
 EOF
 
 # --- Summary of Actions ---
