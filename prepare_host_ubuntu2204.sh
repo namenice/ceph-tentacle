@@ -85,13 +85,25 @@ setup_chrony >> "$LOG_FILE" 2>&1 &
 show_progress $! "⏰ Configuring Chrony time sync..."
 
 # --- 7. Kernel Tuning ---
-TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-if [ "$TOTAL_MEM_KB" -gt 67108864 ]; then 
-    MIN_FREE=4194304 # 4GB
-    NODE_TYPE="Hardware/OSD Node"
+# 1. เช็คว่าเป็น Hardware หรือ VM
+VIRT_TYPE=$(systemd-detect-virt)
+
+if [ "$VIRT_TYPE" = "none" ]; then
+    NODE_TYPE="Physical Hardware"
+    # ถ้าเป็นเครื่องจริง กั้น RAM 4GB (เหมาะกับ OSD Node)
+    MIN_FREE=4194304 
 else
-    MIN_FREE=524288  # 512MB
-    NODE_TYPE="VM/RGW Node"
+    NODE_TYPE="Virtual Machine ($VIRT_TYPE)"
+    # ถ้าเป็น VM กั้น RAM 512MB (เหมาะกับ RGW/Admin Node)
+    MIN_FREE=524288
+fi
+
+# 2. (Optional) ปรับจูนเพิ่มเติมตามปริมาณ RAM จริง 
+# แม้จะเป็น VM แต่ถ้า RAM เยอะมาก ก็ควรเพิ่ม MIN_FREE ตามสัดส่วน
+TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+if [ "$VIRT_TYPE" != "none" ] && [ "$TOTAL_MEM_KB" -gt 67108864 ]; then
+    # กรณีเป็น VM แต่ RAM > 64GB ให้กั้นไว้ 1GB เพื่อความปลอดภัย
+    MIN_FREE=1048576
 fi
 
 apply_kernel_tuning() {
