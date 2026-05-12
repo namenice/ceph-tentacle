@@ -44,6 +44,13 @@ sleep 2 # รอให้ service เริ่มต้นสักครู่
 
 # --- 7. Kernel Tuning ---
 echo "⚙️ Tuning Kernel Parameters..."
+# คำนวณค่า min_free_kbytes ตามปริมาณ RAM (กั้นไว้ประมาณ 1-2% แต่ไม่เกิน 4GB)
+TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+if [ "$TOTAL_MEM_KB" -gt 67108864 ]; then # ถ้า RAM > 64GB
+    MIN_FREE=4194304 # 4GB
+else
+    MIN_FREE=524288  # 512MB สำหรับ VM
+fi
 cat <<EOF | tee /etc/sysctl.d/90-ceph.conf > /dev/null
 # Networking: รองรับ High Throughput สำหรับ OSD 16 ลูก
 net.core.somaxconn = 8192
@@ -58,7 +65,7 @@ net.ipv4.tcp_wmem = 4096 65536 67108864
 
 # Memory Safety: สำหรับเครื่อง RAM 376GB
 vm.swappiness = 5
-vm.min_free_kbytes = 4194304  # กั้น RAM 4GB ไว้ให้ Kernel ป้องกันเครื่องค้างตอน I/O Peak
+vm.min_free_kbytes = $MIN_FREE  # กั้น RAM 4GB ไว้ให้ Kernel ป้องกันเครื่องค้างตอน I/O Peak
 vm.max_map_count = 262144
 
 # File System: ตั้งให้สัมพันธ์กับ ulimit nofile
