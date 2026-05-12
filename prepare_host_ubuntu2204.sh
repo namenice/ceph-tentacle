@@ -6,7 +6,7 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# --- 2. OS Version Validation (Fix for Ubuntu 22.04) ---
+# --- 2. OS Version Validation ---
 OS_ID=$(grep -w "ID" /etc/os-release | cut -d'=' -f2 | tr -d '"')
 OS_VERSION=$(grep -w "VERSION_ID" /etc/os-release | cut -d'=' -f2 | tr -d '"')
 
@@ -15,7 +15,6 @@ if [[ "$OS_ID" == "ubuntu" ]] && [[ "$OS_VERSION" == "22.04" ]]; then
     echo "✅ OS Verified: Ubuntu $OS_VERSION (Jammy Jellyfish)"
 else
     echo "❌ Error: This script is strictly for Ubuntu 22.04."
-    echo "Detected: $OS_ID $OS_VERSION"
     exit 1
 fi
 
@@ -26,10 +25,10 @@ timedatectl set-timezone Asia/Bangkok
 
 # --- 4. Update System & Install Core Dependencies ---
 echo "📦 Updating packages and installing dependencies..."
-apt update && apt upgrade -y
+apt update && apt upgrade -y > /dev/null
 apt install -y curl wget vim python3 python3-pip lvm2 chrony \
             apt-transport-https ca-certificates \
-            dbus-user-session python3-distutils
+            dbus-user-session python3-distutils > /dev/null
 
 # --- 5. Disable Swap ---
 echo "🚫 Disabling Swap..."
@@ -38,70 +37,73 @@ sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
 # --- 6. Enable Chrony (Time Sync) ---
 echo "⏰ Starting Time Sync service..."
-systemctl enable --now chrony
+systemctl enable --now chrony > /dev/null
 systemctl restart chrony
-sleep 2 # รอให้ service เริ่มต้นสักครู่
 
 # --- 7. Kernel Tuning ---
 echo "⚙️ Tuning Kernel Parameters..."
-# คำนวณค่า min_free_kbytes ตามปริมาณ RAM (กั้นไว้ประมาณ 1-2% แต่ไม่เกิน 4GB)
 TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-if [ "$TOTAL_MEM_KB" -gt 67108864 ]; then # ถ้า RAM > 64GB
+if [ "$TOTAL_MEM_KB" -gt 67108864 ]; then 
     MIN_FREE=4194304 # 4GB
+    NODE_TYPE="Hardware/High-RAM"
 else
-    MIN_FREE=524288  # 512MB สำหรับ VM
+    MIN_FREE=524288  # 512MB
+    NODE_TYPE="VM/Low-RAM"
 fi
+
 cat <<EOF | tee /etc/sysctl.d/90-ceph.conf > /dev/null
-# Networking: รองรับ High Throughput สำหรับ OSD 16 ลูก
 net.core.somaxconn = 8192
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.ip_local_port_range = 1024 65535
-
-# TCP Buffer: ขยายเป็น 64MB เพื่อรองรับการส่งข้อมูลก้อนใหญ่ (Large Objects)
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
 net.ipv4.tcp_rmem = 4096 87380 67108864
 net.ipv4.tcp_wmem = 4096 65536 67108864
-
-# Memory Safety: สำหรับเครื่อง RAM 376GB
 vm.swappiness = 5
-vm.min_free_kbytes = $MIN_FREE  # กั้น RAM 4GB ไว้ให้ Kernel ป้องกันเครื่องค้างตอน I/O Peak
+vm.min_free_kbytes = $MIN_FREE
 vm.max_map_count = 262144
-
-# File System: ตั้งให้สัมพันธ์กับ ulimit nofile
 fs.file-max = 4194304
 EOF
 sudo sysctl --system > /dev/null
 
-# --- 8. Set Resource Limits (Ulimits) ---
-# --- Resource Limits (/etc/security/limits.d/ceph.conf) ---
-echo "📋 Configuring Resource Limits (nofile only)..."
+# --- 8. Set Resource Limits ---
+echo "📋 Configuring Resource Limits..."
 cat <<EOF | sudo tee /etc/security/limits.d/ceph.conf > /dev/null
-# ขยายเพดานการเปิดไฟล์เป็น 1 ล้าน (Mandatory for Ceph OSD/RGW)
 * soft nofile 1048576
 * hard nofile 1048576
 EOF
 
-# --- 9. Install Toolling ---
-echo "tools: Installing debugging tools..."
-apt install -y htop iotop iftop net-tools smartmontools
+# --- 9. Install Tooling ---
+echo "🛠️ Installing debugging tools..."
+apt install -y htop iotop iftop net-tools smartmontools > /dev/null
 
-# --- Summary of Actions ---
+# --- 10. Detailed Summary of Actions ---
 echo ""
 echo "========================================================"
 echo "🎯 HOST PREPARATION COMPLETED!"
 echo "========================================================"
-echo "✅ OS Check     : Ubuntu 22.04 (PASS)"
-echo "✅ Timezone     : $(date) (Asia/Bangkok)"
-echo "✅ Swap Status  : DISABLED (Permanent)"
-echo "✅ SSH Server   : Installed & Running"
-echo "✅ Kernel/Lim   : Optimized for High-concurrency RGW"
-echo "✅ Time Sync    : Chrony service is active"
+echo "📊 SYSTEM INFO:"
+echo "   - OS Version     : Ubuntu $OS_VERSION"
+echo "   - Hostname       : $(hostname)"
+echo "   - Detected RAM   : $((TOTAL_MEM_KB / 1024 / 1024)) GB"
+echo "   - Node Profile   : $NODE_TYPE"
+echo ""
+echo "⚙️ KERNEL & MEMORY TUNING:"
+echo "   - vm.min_free_kbytes : $((MIN_FREE / 1024)) MB (Guarded for Kernel)"
+echo "   - vm.swappiness      : $(sysctl -n vm.swappiness) (Optimized for RAM)"
+echo "   - fs.file-max        : $(sysctl -n fs.file-max) (System-wide file limit)"
+echo ""
+echo "🌐 NETWORK OPTIMIZATION:"
+echo "   - somaxconn          : $(sysctl -n net.core.somaxconn) (Backlog Queue)"
+echo "   - TCP Max Buffer     : 64 MB (High-throughput ready)"
+echo ""
+echo "📂 RESOURCE LIMITS (ulimit):"
+echo "   - Max Open Files     : $(grep "soft nofile" /etc/security/limits.d/ceph.conf | awk '{print $3}') (Standard for Ceph)"
+echo ""
+echo "✅ SERVICES & SECURITY:"
+echo "   - Time Sync (Chrony) : $(systemctl is-active chrony)"
+echo "   - Swap Status        : $([[ -z $(swapon --show) ]] && echo "OFF (PASS)" || echo "ON (WARNING)")"
+echo "   - Debug Tools        : Installed (htop, iotop, iftop, smartctl)"
 echo "--------------------------------------------------------"
-echo "👉 NEXT STEP: REBOOT now, then proceed with:"
-echo "   1. curl --silent --remote-name --location https://download.ceph.com/rpm-20.2.0/el9/noarch/cephadm"
-echo "   2. chmod +x cephadm"
-echo "   3. mv cephadm /usr/local/bin/" 
-echo "   4. cephadm install podman"
-echo "   5. cephadm bootstrap --mon-ip <IP>"
+echo "👉 NEXT STEP: REBOOT now to apply all kernel changes."
 echo "========================================================"
