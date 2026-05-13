@@ -147,7 +147,24 @@ CPU_CORES=$(nproc)
 KERNEL_VER=$(uname -r)
 DISK_COUNT=$(lsblk -dno TYPE | grep -c disk)
 
-# --- 10. Detailed Summary of Actions ---
+# --- 9. Install Tooling ---
+setup_ssh_root() {
+# 2. สร้างไฟล์คอนฟิกใหม่ใน sshd_config.d
+# การตั้งค่าในนี้จะไป Override หรือเพิ่มเติมจากไฟล์หลัก
+cat <<EOF > /etc/ssh/sshd_config.d/01-ceph-root-ssh.conf
+# Custom SSH configuration for Ceph Nodes
+PermitRootLogin yes
+PasswordAuthentication yes
+EOF
+# ปรับ Permission ให้ปลอดภัย
+chmod 644 /etc/ssh/sshd_config.d/01-ceph-root-ssh.conf
+# 3. Restart SSH service
+systemctl restart sshd
+}
+setup_ssh_root >> "$LOG_FILE" 2>&1 &
+show_progress $! "🔑 Configuring SSH Root Access via sshd_config.d..."
+
+# ---  Detailed Summary of Actions ---
 echo -e "\n========================================================"
 echo -e "🎯 ${GREEN}HOST PREPARATION COMPLETED!${NC}"
 echo -e "========================================================"
@@ -256,6 +273,42 @@ echo -e "✅ ${GREEN}SERVICES & SECURITY:${NC}"
 echo "   - Time Sync (Chrony) : $(systemctl is-active chrony)"
 echo -e "   - Swap Status        : $([[ -z $(swapon --show) ]] && echo -e "${GREEN}OFF (PASS)${NC}" || echo -e "${RED}ON (WARNING)${NC}")"
 echo "   - Detailed Log Path  : $LOG_FILE"
+#!/bin/bash
+echo ""
+echo -e "🔍 Verifying SSH Root Access (Include-aware)..."
+# 1. ตรวจสอบจากค่าที่ Effective จริง (ใช้ sshd -T เพื่อดูค่าที่ระบบมองเห็นหลังรวมทุกไฟล์แล้ว)
+SSH_VARS=$(sshd -T)
+CURRENT_PERMIT_ROOT=$(echo "$SSH_VARS" | grep -i "^permitrootlogin" | awk '{print $2}')
+CURRENT_PWD_AUTH=$(echo "$SSH_VARS" | grep -i "^passwordauthentication" | awk '{print $2}')
+
+# Check PermitRootLogin
+if [ "$CURRENT_PERMIT_ROOT" == "yes" ]; then
+    echo -e "   [✔] PermitRootLogin: ${GREEN}yes${NC} (Effective)"
+else
+    echo -e "   [✘] PermitRootLogin: ${RED}$CURRENT_PERMIT_ROOT${NC}"
+fi
+
+# Check PasswordAuthentication
+if [ "$CURRENT_PWD_AUTH" == "yes" ]; then
+    echo -e "   [✔] PasswordAuth  : ${GREEN}yes${NC} (Effective)"
+else
+    echo -e "   [✘] PasswordAuth  : ${RED}$CURRENT_PWD_AUTH${NC}"
+fi
+
+# 2. ตรวจสอบว่าไฟล์ที่เราสร้างขึ้นมีอยู่จริงไหม
+if [ -f "/etc/ssh/sshd_config.d/01-ceph-root-ssh.conf" ]; then
+    echo -e "   [✔] Config File   : Found 01-ceph-root-ssh.conf"
+else
+    echo -e "   [!] Config File   : ${RED}Custom config file not found!${NC}"
+fi
+
+# 3. Service Status
+if systemctl is-active --quiet ssh; then
+    echo -e "   [✔] Service       : SSH Daemon is running"
+else
+    echo -e "   [✘] Service       : SSH Daemon is DOWN"
+fi
+echo ""
 echo "--------------------------------------------------------"
 echo -e "👉 ${RED}NEXT STEP:${NC} REBOOT now to apply all kernel changes."
 echo "========================================================"
