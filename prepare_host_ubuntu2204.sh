@@ -275,7 +275,7 @@ echo -e "   - Swap Status        : $([[ -z $(swapon --show) ]] && echo -e "${GRE
 echo "   - Detailed Log Path  : $LOG_FILE"
 #!/bin/bash
 echo ""
-echo -e "🔍 Verifying SSH Root Access (Include-aware)..."
+echo -e "🔍 ${GREEN}Verifying SSH Root Access (Include-aware):${NC}"
 # 1. ตรวจสอบจากค่าที่ Effective จริง (ใช้ sshd -T เพื่อดูค่าที่ระบบมองเห็นหลังรวมทุกไฟล์แล้ว)
 SSH_VARS=$(sshd -T)
 CURRENT_PERMIT_ROOT=$(echo "$SSH_VARS" | grep -i "^permitrootlogin" | awk '{print $2}')
